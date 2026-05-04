@@ -232,6 +232,44 @@ const SEED_MEMBERS = [
   {id:"5",name:"Trung",        username:"trung",      password:"123456", role:"member"},
 ];
 
+// ─── FIREBASE DATA NORMALIZER ────────────────────────────────────────────────
+// Firebase converts arrays with holes to objects {0:x, 1:x} — convert back
+function toArr(v) {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.filter(Boolean);
+  return Object.values(v).filter(Boolean);
+}
+function normalizeFromFirebase(val) {
+  const members = toArr(val.members);
+  const sessions = toArr(val.sessions).map(sess => ({
+    ...sess,
+    players: toArr(sess.players),
+    rounds: toArr(sess.rounds).map(r => ({
+      ...r,
+      matches: toArr(r.matches).map(m => ({
+        ...m,
+        team1: toArr(m.team1),
+        team2: toArr(m.team2),
+      })),
+      sitters: toArr(r.sitters),
+    })),
+  }));
+  const activeSession = val.activeSession ? {
+    ...val.activeSession,
+    players: toArr(val.activeSession.players),
+    rounds: toArr(val.activeSession.rounds).map(r => ({
+      ...r,
+      matches: toArr(r.matches).map(m => ({
+        ...m,
+        team1: toArr(m.team1),
+        team2: toArr(m.team2),
+      })),
+      sitters: toArr(r.sitters),
+    })),
+  } : null;
+  return { ...val, members, sessions, activeSession };
+}
+
 export default function App() {
   const [db,setDb]=useState(null), [loading,setLoading]=useState(true);
   const [user,setUser]=useState(null), [tab,setTab]=useState("session"), [toast,setToast]=useState(null);
@@ -242,14 +280,7 @@ export default function App() {
       try {
         const val = snapshot.val();
         if (val && val.members) {
-          // Firebase may convert arrays to objects with numeric keys — normalize
-          const members = Array.isArray(val.members)
-            ? val.members.filter(Boolean)
-            : Object.values(val.members).filter(Boolean);
-          const sessions = Array.isArray(val.sessions)
-            ? val.sessions.filter(Boolean)
-            : val.sessions ? Object.values(val.sessions).filter(Boolean) : [];
-          setDb({...val, members, sessions, activeSession: val.activeSession || null});
+          setDb(normalizeFromFirebase(val));
         } else {
           const initial = {members: SEED_MEMBERS, sessions:[], activeSession:null};
           setDb(initial);
@@ -257,14 +288,12 @@ export default function App() {
         }
       } catch(e) {
         console.warn("[Firebase] parse error:", e);
-        const initial = {members: SEED_MEMBERS, sessions:[], activeSession:null};
-        setDb(initial);
+        setDb({members: SEED_MEMBERS, sessions:[], activeSession:null});
       }
       setLoading(false);
     }, (error) => {
       console.warn("[Firebase] read error:", error);
-      const initial = {members: SEED_MEMBERS, sessions:[], activeSession:null};
-      setDb(initial);
+      setDb({members: SEED_MEMBERS, sessions:[], activeSession:null});
       setLoading(false);
     });
     return () => unsubscribe();
