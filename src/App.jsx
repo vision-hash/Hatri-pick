@@ -239,14 +239,26 @@ export default function App() {
   useEffect(()=>{
     // Listen realtime from Firebase
     const unsubscribe = onValue(dbRef(), (snapshot) => {
-      const val = snapshot.val();
-      if (val && val.members && val.members.length > 0) {
-        setDb(val);
-      } else {
-        // First time: seed data
+      try {
+        const val = snapshot.val();
+        if (val && val.members) {
+          // Firebase may convert arrays to objects with numeric keys — normalize
+          const members = Array.isArray(val.members)
+            ? val.members.filter(Boolean)
+            : Object.values(val.members).filter(Boolean);
+          const sessions = Array.isArray(val.sessions)
+            ? val.sessions.filter(Boolean)
+            : val.sessions ? Object.values(val.sessions).filter(Boolean) : [];
+          setDb({...val, members, sessions, activeSession: val.activeSession || null});
+        } else {
+          const initial = {members: SEED_MEMBERS, sessions:[], activeSession:null};
+          setDb(initial);
+          set(dbRef(), initial).catch(e => console.warn("[Firebase] seed failed:", e));
+        }
+      } catch(e) {
+        console.warn("[Firebase] parse error:", e);
         const initial = {members: SEED_MEMBERS, sessions:[], activeSession:null};
         setDb(initial);
-        set(dbRef(), initial).catch(e => console.warn("[Firebase] seed failed:", e));
       }
       setLoading(false);
     }, (error) => {
@@ -277,7 +289,8 @@ export default function App() {
   if (!user) return <Login onLogin={setUser} members={members}/>;
 
   const isAdmin = user.role === "admin";
-  const { sessions, activeSession } = db;
+  const sessions = db?.sessions || [];
+  const activeSession = db?.activeSession || null;
 
   return (
     <div style={{minHeight:"100vh",background:"#0d1117",color:"#e2e8f0",maxWidth:520,margin:"0 auto"}}>
