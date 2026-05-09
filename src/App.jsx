@@ -17,8 +17,11 @@ const firebaseDb = getDatabase(firebaseApp);
 const dbRef = () => ref(firebaseDb, "app_data");
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
-const WIN_SCORE = 13, FINE = 20000, KEY = "hatri_pick_v1";
-const isAce = (s1,s2) => (s1===13&&s2===0)||(s1===0&&s2===13);
+const WIN_SCORE = 11, MAX_SCORE = 15, FINE = 20000, KEY = "hatri_pick_v1";
+// Set 11 cách 2: thắng khi >= 11 VÀ hơn >= 2, tối đa 15
+const isValidWin = (a, b) => (a >= WIN_SCORE && a - b >= 2) || a === MAX_SCORE;
+const isWinner = (s1, s2) => isValidWin(s1, s2) ? 1 : isValidWin(s2, s1) ? 2 : 0;
+const isAce = (s1,s2) => (isValidWin(s1,s2) && s2===0) || (isValidWin(s2,s1) && s1===0);
 const DEFAULT_PASSWORD = "123456";
 const fmt = (n) => Math.round(n).toLocaleString("vi-VN");
 const shuffle = (arr) => { const a=[...arr]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
@@ -99,7 +102,7 @@ function calcSession(members, rounds) {
   const s = {}; members.forEach(m=>{s[m.id]={id:m.id,name:m.name,wins:0,losses:0,pf:0,fine:0,played:0,aces:0};});
   rounds.forEach(r=>r.matches.forEach(m=>{
     if(m.score1===null||m.score2===null) return;
-    const s1=+m.score1,s2=+m.score2,w1=s1>s2,ace=isAce(s1,s2),mult=ace?2:1;
+    const s1=+m.score1,s2=+m.score2,w=isWinner(s1,s2);if(!w)return;const w1=w===1,ace=isAce(s1,s2),mult=ace?2:1;
     m.team1.forEach(p=>{if(!s[p])return;s[p].played++;if(w1){s[p].wins++;if(ace)s[p].aces++;}else{s[p].losses+=mult;s[p].fine+=FINE*mult;}s[p].pf+=s1;});
     m.team2.forEach(p=>{if(!s[p])return;s[p].played++;if(!w1){s[p].wins++;if(ace)s[p].aces++;}else{s[p].losses+=mult;s[p].fine+=FINE*mult;}s[p].pf+=s2;});
   }));
@@ -110,7 +113,7 @@ function calcOverall(members, sessions) {
   const s = {}; members.forEach(m=>{s[m.id]={id:m.id,name:m.name,total:0,wins:0,losses:0,pf:0,fine:0,aces:0};});
   sessions.forEach(sess=>sess.rounds.forEach(r=>r.matches.forEach(m=>{
     if(m.score1===null||m.score2===null) return;
-    const s1=+m.score1,s2=+m.score2,w1=s1>s2,ace=isAce(s1,s2),mult=ace?2:1;
+    const s1=+m.score1,s2=+m.score2,w=isWinner(s1,s2);if(!w)return;const w1=w===1,ace=isAce(s1,s2),mult=ace?2:1;
     m.team1.forEach(p=>{if(!s[p])return;s[p].total++;if(w1){s[p].wins++;if(ace)s[p].aces++;}else{s[p].losses+=mult;s[p].fine+=FINE*mult;}s[p].pf+=s1;});
     m.team2.forEach(p=>{if(!s[p])return;s[p].total++;if(!w1){s[p].wins++;if(ace)s[p].aces++;}else{s[p].losses+=mult;s[p].fine+=FINE*mult;}s[p].pf+=s2;});
   })));
@@ -142,7 +145,7 @@ function getH2H(myId, sessions, members) {
     const in1=m.team1.includes(myId),in2=m.team2.includes(myId);
     if(!in1&&!in2) return;
     const my=in1?m.team1:m.team2,opp=in1?m.team2:m.team1;
-    const ms=in1?+m.score1:+m.score2,os=in1?+m.score2:+m.score1,won=ms>os;
+    const ms=in1?+m.score1:+m.score2,os=in1?+m.score2:+m.score1,won=isWinner(ms,os)===1;
     my.filter(p=>p!==myId).forEach(p=>{if(!h[p])return;h[p].asPartner++;h[p].played++;won?h[p].wins++:h[p].losses++;if(won)h[p].partWins++;});
     opp.forEach(p=>{if(!h[p])return;h[p].asOpp++;h[p].played++;won?h[p].wins++:h[p].losses++;if(won)h[p].oppWins++;});
   })));
@@ -532,12 +535,12 @@ function SessionTab({ db, isAdmin, save, showToast, currentUser }) {
   }
 
   function upScore(ri,mi,team,val) {
-    const v = val===""?null:Math.max(0,Math.min(WIN_SCORE,+val));
+    const v = val===""?null:Math.max(0,Math.min(MAX_SCORE,+val));
     const upd = {...activeSession};
     upd.rounds = upd.rounds.map((r,rI)=>rI!==ri?r:{...r,matches:r.matches.map((m,mI)=>{
       if(mI!==mi) return m;
       const nm={...m,[team===1?"score1":"score2"]:v};
-      if(nm.score1!==null&&nm.score2!==null) nm.winner=nm.score1>nm.score2?1:2; else nm.winner=null;
+      if(nm.score1!==null&&nm.score2!==null){ const w=isWinner(+nm.score1,+nm.score2); nm.winner=w||null; } else nm.winner=null;
       return nm;
     })});
     save({...db, activeSession:upd});
@@ -718,9 +721,9 @@ function SessionTab({ db, isAdmin, save, showToast, currentUser }) {
                   ))}
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-                  <input type="number" min={0} max={WIN_SCORE} className="sinp" value={match.score1??""} onChange={e=>!match.locked&&upScore(ri,mi,1,e.target.value)} disabled={match.locked} style={{color:match.winner===1?"#68d391":"#e2e8f0"}}/>
+                  <input type="number" min={0} max={MAX_SCORE} className="sinp" value={match.score1??""} onChange={e=>!match.locked&&upScore(ri,mi,1,e.target.value)} disabled={match.locked} style={{color:match.winner===1?"#68d391":"#e2e8f0"}}/>
                   <span style={{color:"#4a5568",fontWeight:900,fontSize:18}}>–</span>
-                  <input type="number" min={0} max={WIN_SCORE} className="sinp" value={match.score2??""} onChange={e=>!match.locked&&upScore(ri,mi,2,e.target.value)} disabled={match.locked} style={{color:match.winner===2?"#68d391":"#e2e8f0"}}/>
+                  <input type="number" min={0} max={MAX_SCORE} className="sinp" value={match.score2??""} onChange={e=>!match.locked&&upScore(ri,mi,2,e.target.value)} disabled={match.locked} style={{color:match.winner===2?"#68d391":"#e2e8f0"}}/>
                 </div>
                 <div style={{flex:1,textAlign:"right"}}>
                   {match.team2.map(pid=>(
@@ -791,7 +794,7 @@ function MonthlyBeerStats({ members, sessions }) {
     if (!monthMap[month]) monthMap[month] = {};
     sess.rounds.forEach(r => r.matches.forEach(m => {
       if (m.score1===null||m.score2===null) return;
-      const s1=+m.score1,s2=+m.score2,w1=s1>s2,ace=isAce(s1,s2),mult=ace?2:1;
+      const s1=+m.score1,s2=+m.score2,w=isWinner(s1,s2);if(!w)return;const w1=w===1,ace=isAce(s1,s2),mult=ace?2:1;
       const losers = w1?m.team2:m.team1;
       losers.forEach(p => {
         if (!monthMap[month][p]) monthMap[month][p]=0;
@@ -876,7 +879,7 @@ function StandingsTab({ members, sessions, isAdmin, save, showToast, db }) {
       ...r, matches: r.matches.map((m,mI)=>{
         if(mI!==mi) return m;
         const nm={...m,[team===1?"score1":"score2"]:v};
-        if(nm.score1!==null&&nm.score2!==null) nm.winner=nm.score1>nm.score2?1:2; else nm.winner=null;
+        if(nm.score1!==null&&nm.score2!==null){ const w=isWinner(+nm.score1,+nm.score2); nm.winner=w||null; } else nm.winner=null;
         return nm;
       })
     })};
