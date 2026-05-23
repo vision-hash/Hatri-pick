@@ -229,9 +229,9 @@ function Login({ onLogin, members }) {
 // ─── APP ─────────────────────────────────────────────────────────────────────
 const SEED_MEMBERS = [
   {id:"1",name:"Dũng Lê",      username:"dungle",     password:"123456", role:"admin"},
-  {id:"2",name:"Hoàng Cường",  username:"hoangcuong", password:"123456", role:"member"},
+  {id:"2",name:"Hoàng Cường",  username:"hoangcuong", password:"123456", role:"admin"},
   {id:"3",name:"Dũng Lớn",     username:"dunglon",    password:"123456", role:"member"},
-  {id:"4",name:"Hoàng Minh",   username:"hoangminh",  password:"123456", role:"member"},
+  {id:"4",name:"Hoàng Minh",   username:"hoangminh",  password:"123456", role:"admin"},
   {id:"5",name:"Trung",        username:"trung",      password:"123456", role:"member"},
 ];
 
@@ -484,11 +484,18 @@ function SessionTab({ db, isAdmin, save, showToast, currentUser }) {
   const [confirm,setConfirm]=useState(false);
   const [sessionMode,setSessionMode]=useState("random"); // "random" | "custom"
   const [addCustom,setAddCustom]=useState(false);
+  const [showPenaltySession,setShowPenaltySession]=useState(false);
   const [cTeam1,setCTeam1]=useState(["",""]);
   const [cTeam2,setCTeam2]=useState(["",""]);
 
   useEffect(()=>{ setView(activeSession?"matches":"setup"); },[activeSession]);
   const gn = (id) => members.find(m=>m.id===id)?.name || id;
+
+  function savePenaltyToSession(penalties) {
+    const updated = {...activeSession, penalties:[...(activeSession.penalties||[]),...penalties]};
+    save({...db, activeSession:updated});
+    showToast("Đã lưu " + penalties.length + " phạt bia!");
+  }
 
   function create() {
     const ids = Object.entries(sel).filter(([,v])=>v).map(([k])=>k);
@@ -693,9 +700,31 @@ function SessionTab({ db, isAdmin, save, showToast, currentUser }) {
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {isAdmin && <button onClick={()=>finish(false)} className="btn-g" style={{flex:1,padding:"9px 0",fontSize:13,borderRadius:10}}>{done===total?"✅ Kết thúc buổi":"⏹ Kết thúc ("+done+"/"+total+")"}</button>}
           <button onClick={()=>setAddCustom(true)} className="btn-blue" style={{padding:"9px 14px",fontSize:13,width:"auto"}}>+ Kèo tự chọn</button>
+          {isAdmin && <button onClick={()=>setShowPenaltySession(true)} style={{padding:"9px 14px",fontSize:13,background:"#2a1418",border:"1.5px solid #742a2a",borderRadius:10,color:"#fc8181",fontWeight:800,cursor:"pointer",width:"auto"}}>🍺 Phạt bia</button>}
           {isAdmin && <button className="btn-r" onClick={cancel} style={{padding:"9px 12px",fontSize:13}}>Huỷ</button>}
         </div>
       </div>
+
+      {/* Penalty Modal for active session */}
+      {showPenaltySession && (
+        <PenaltyModal members={members.filter(m=>activeSession.players?.includes(m.id)||true)} onClose={()=>setShowPenaltySession(false)} onSave={savePenaltyToSession}/>
+      )}
+
+      {/* Existing penalties */}
+      {(activeSession.penalties||[]).length > 0 && (
+        <div className="card" style={{marginBottom:8,border:"1px solid #742a2a"}}>
+          <div style={{fontWeight:800,color:"#fc8181",marginBottom:8,fontSize:13}}>🍺 Phạt bia buổi này</div>
+          {(activeSession.penalties||[]).map((p,pi)=>(
+            <div key={p.id||pi} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:pi<(activeSession.penalties||[]).length-1?"1px solid #1e2535":"none"}}>
+              <div style={{flex:1}}>
+                <span style={{fontWeight:800,fontSize:13,color:"#fc8181"}}>{members.find(m=>m.id===p.memberId)?.name||p.memberId}</span>
+                <span style={{fontSize:11,color:"#718096",marginLeft:8}}>{p.note}</span>
+              </div>
+              <span style={{fontWeight:900,color:"#f6c90e"}}>{p.beers}🍺</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Rounds */}
       {activeSession.rounds.map((round,ri)=>(
@@ -801,6 +830,11 @@ function MonthlyBeerStats({ members, sessions }) {
         monthMap[month][p]+=mult;
       });
     }));
+    // Cộng thêm phạt bia
+    (sess.penalties||[]).forEach(p => {
+      if (!monthMap[month][p.memberId]) monthMap[month][p.memberId]=0;
+      monthMap[month][p.memberId]+=p.beers;
+    });
   });
 
   const months = Object.keys(monthMap).sort().reverse();
@@ -852,11 +886,86 @@ function MonthlyBeerStats({ members, sessions }) {
 }
 
 // ─── STANDINGS TAB ────────────────────────────────────────────────────────────
+
+// ─── PENALTY MODAL ────────────────────────────────────────────────────────────
+function PenaltyModal({ members, onSave, onClose }) {
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [beers, setBeers] = useState(1);
+  const [note, setNote] = useState("");
+
+  function toggleMember(id) {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
+  }
+  function handleSave() {
+    if (selectedIds.length === 0) { alert("Chọn ít nhất 1 người bị phạt!"); return; }
+    if (!note.trim()) { alert("Vui lòng nhập ghi chú lỗi phạt!"); return; }
+    const penalties = selectedIds.map(id => ({
+      id: "pen_"+Date.now()+"_"+id,
+      memberId: id,
+      beers: +beers,
+      note: note.trim(),
+      createdAt: new Date().toLocaleDateString("vi-VN"),
+    }));
+    onSave(penalties);
+    onClose();
+  }
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:16}}>
+      <div style={{background:"#1a2535",border:"1px solid #742a2a",borderRadius:16,padding:"20px 16px",maxWidth:380,width:"100%",maxHeight:"90vh",overflowY:"auto"}}>
+        <div style={{fontWeight:900,fontSize:16,marginBottom:16,color:"#fc8181"}}>🍺 Thêm phạt bia</div>
+
+        {/* Member selection */}
+        <div style={{fontSize:11,color:"#4a5568",fontWeight:700,marginBottom:8,textTransform:"uppercase"}}>Người bị phạt</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:16}}>
+          {members.map(m=>{
+            const sel = selectedIds.includes(m.id);
+            return (
+              <button key={m.id} onClick={()=>toggleMember(m.id)}
+                style={{padding:"7px 14px",borderRadius:20,border:`1.5px solid ${sel?"#fc8181":"#2d3748"}`,background:sel?"#2a1418":"#0d1117",color:sel?"#fc8181":"#718096",fontSize:13,fontWeight:sel?800:600,cursor:"pointer"}}>
+                {m.name}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Beer count */}
+        <div style={{fontSize:11,color:"#4a5568",fontWeight:700,marginBottom:8,textTransform:"uppercase"}}>Số chai bia phạt (mỗi người)</div>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+          <button onClick={()=>setBeers(b=>Math.max(1,b-1))} style={{width:36,height:36,borderRadius:18,border:"1.5px solid #2d3748",background:"#0d1117",color:"#e2e8f0",fontSize:20,cursor:"pointer",fontWeight:900,lineHeight:1}}>−</button>
+          <span style={{fontSize:24,fontWeight:900,color:"#f6c90e",minWidth:32,textAlign:"center"}}>{beers}</span>
+          <button onClick={()=>setBeers(b=>b+1)} style={{width:36,height:36,borderRadius:18,border:"1.5px solid #2d3748",background:"#0d1117",color:"#e2e8f0",fontSize:20,cursor:"pointer",fontWeight:900,lineHeight:1}}>+</button>
+          <span style={{fontSize:18}}>🍺</span>
+        </div>
+
+        {/* Note */}
+        <div style={{fontSize:11,color:"#4a5568",fontWeight:700,marginBottom:8,textTransform:"uppercase"}}>Ghi chú lỗi phạt</div>
+        <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Ví dụ: Đến trễ 30 phút, bỏ buổi không báo..." rows={3}
+          style={{width:"100%",boxSizing:"border-box",padding:"10px 12px",borderRadius:10,border:"1.5px solid #2d3748",background:"#0d1117",color:"#e2e8f0",fontSize:13,resize:"vertical",outline:"none",fontFamily:"inherit"}}/>
+
+        {/* Preview */}
+        {selectedIds.length > 0 && (
+          <div style={{marginTop:12,padding:"10px 12px",background:"#0d1117",borderRadius:10,border:"1px solid #2d3748",fontSize:12}}>
+            <span style={{color:"#4a5568"}}>Tổng phạt: </span>
+            <span style={{fontWeight:900,color:"#f6c90e"}}>{selectedIds.length} người × {beers}🍺 = {selectedIds.length * beers}🍺</span>
+          </div>
+        )}
+
+        <div style={{display:"flex",gap:8,marginTop:16}}>
+          <button onClick={onClose} className="btn-gray" style={{flex:1,padding:"10px 0",fontSize:13,width:"auto"}}>Huỷ</button>
+          <button onClick={handleSave} style={{flex:1,padding:"10px 0",fontSize:13,background:"#742a2a",border:"1.5px solid #fc8181",borderRadius:10,color:"#fc8181",fontWeight:900,cursor:"pointer",width:"auto"}}>💾 Lưu phạt</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StandingsTab({ members, sessions, isAdmin, save, showToast, db }) {
   const [detail, setDetail] = useState(null);
-  const [editMode, setEditMode] = useState(false);   // đang chỉnh sửa buổi
-  const [addCustom, setAddCustom] = useState(false); // modal thêm kèo
-  const [cTeam1, setCTeam1] = useState(["",""]); 
+  const [editMode, setEditMode] = useState(false);
+  const [addCustom, setAddCustom] = useState(false);
+  const [showPenalty, setShowPenalty] = useState(false);
+  const [cTeam1, setCTeam1] = useState(["",""]);
   const [cTeam2, setCTeam2] = useState(["",""]);
   const stats = calcOverall(members, sessions);
   const gn = (id) => members.find(m=>m.id===id)?.name || id;
@@ -866,6 +975,17 @@ function StandingsTab({ members, sessions, isAdmin, save, showToast, db }) {
     const newSessions = db.sessions.map(s => s.id===updatedSess.id ? updatedSess : s);
     save({...db, sessions: newSessions});
     showToast("Đã lưu thay đổi!");
+  }
+  function savePenalties(sess, newPenalties) {
+    const existing = sess.penalties || [];
+    const upd = {...sess, penalties: [...existing, ...newPenalties]};
+    saveSession(upd);
+    showToast("Đã lưu " + newPenalties.length + " phạt bia!");
+  }
+  function deletePenalty(sess, penId) {
+    const upd = {...sess, penalties: (sess.penalties||[]).filter(p=>p.id!==penId)};
+    saveSession(upd);
+    showToast("Đã xoá phạt!");
   }
   function deleteSession(sessId) {
     const sess = sessions.find(s=>s.id===sessId);
@@ -916,6 +1036,9 @@ function StandingsTab({ members, sessions, isAdmin, save, showToast, db }) {
         <button className="btn-back" onClick={()=>{setDetail(null);setEditMode(false);}}>← Quay lại tổng sắp</button>
 
         {/* Add custom match modal */}
+        {showPenalty && (
+          <PenaltyModal members={members} onClose={()=>setShowPenalty(false)} onSave={(pens)=>savePenalties(sess,pens)}/>
+        )}
         {addCustom && (
           <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:16}}>
             <div style={{background:"#1a2535",border:"1px solid #2d3748",borderRadius:16,padding:"20px 16px",maxWidth:360,width:"100%"}}>
@@ -956,6 +1079,9 @@ function StandingsTab({ members, sessions, isAdmin, save, showToast, db }) {
               <button onClick={()=>setAddCustom(true)} style={{background:"#1a2a3a",border:"1.5px solid #2d5a3d",borderRadius:10,padding:"8px 14px",color:"#68d391",fontSize:13,fontWeight:800,cursor:"pointer"}}>
                 ➕ Thêm kèo
               </button>
+              <button onClick={()=>setShowPenalty(true)} style={{background:"#2a1418",border:"1.5px solid #742a2a",borderRadius:10,padding:"8px 14px",color:"#fc8181",fontSize:13,fontWeight:800,cursor:"pointer"}}>
+                🍺 Phạt bia
+              </button>
               <button onClick={()=>{if(window.confirm("Xoá toàn bộ buổi "+sess.date+"? Không thể hoàn tác!")){deleteSession(sess.id);setDetail(null);setEditMode(false);}}} style={{background:"#2a1418",border:"1.5px solid #742a2a",borderRadius:10,padding:"8px 14px",color:"#fc8181",fontSize:13,fontWeight:800,cursor:"pointer"}}>
                 🗑️ Xoá buổi
               </button>
@@ -977,8 +1103,31 @@ function StandingsTab({ members, sessions, isAdmin, save, showToast, db }) {
               {s.losses>0&&<span style={{background:"#1a2a0d",color:"#9ae6b4",padding:"2px 8px",borderRadius:6,fontSize:12,fontWeight:800}}>{s.losses}🍺</span>}
             </div>
           ))}
-          {st.reduce((a,x)=>a+x.losses,0)>0&&<div style={{marginTop:10,paddingTop:10,borderTop:"1px solid #1e2535",display:"flex",justifyContent:"space-between"}}><span style={{fontWeight:700,color:"#a0aec0",fontSize:13}}>🍺 Tổng đóng góp</span><span style={{fontWeight:900,color:"#9ae6b4"}}>{st.reduce((a,x)=>a+x.losses,0)} chai</span></div>}
+          {(st.reduce((a,x)=>a+x.losses,0)+(sess.penalties||[]).reduce((a,p)=>a+p.beers,0))>0&&<div style={{marginTop:10,paddingTop:10,borderTop:"1px solid #1e2535",display:"flex",justifyContent:"space-between"}}><span style={{fontWeight:700,color:"#a0aec0",fontSize:13}}>🍺 Tổng đóng góp</span><span style={{fontWeight:900,color:"#9ae6b4"}}>{st.reduce((a,x)=>a+x.losses,0)+(sess.penalties||[]).reduce((a,p)=>a+p.beers,0)} chai</span></div>}
         </div>
+        {/* Penalty list */}
+        {(sess.penalties||[]).length > 0 && (
+          <div className="card" style={{marginBottom:12,border:"1px solid #742a2a"}}>
+            <div style={{fontWeight:800,color:"#fc8181",marginBottom:10}}>🍺 Phạt bia buổi này</div>
+            {(sess.penalties||[]).map((p,pi)=>(
+              <div key={p.id||pi} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:pi<(sess.penalties||[]).length-1?"1px solid #1e2535":"none"}}>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:800,fontSize:13,color:"#fc8181"}}>{members.find(m=>m.id===p.memberId)?.name||p.memberId}</div>
+                  <div style={{fontSize:11,color:"#718096",marginTop:2}}>{p.note}</div>
+                  <div style={{fontSize:10,color:"#4a5568",marginTop:1}}>{p.createdAt}</div>
+                </div>
+                <div style={{fontWeight:900,fontSize:15,color:"#f6c90e"}}>{p.beers}🍺</div>
+                {isAdmin && editMode && (
+                  <button onClick={()=>deletePenalty(sess,p.id)} style={{background:"none",border:"none",color:"#742a2a",fontSize:16,cursor:"pointer",padding:"4px"}}>✕</button>
+                )}
+              </div>
+            ))}
+            <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid #2a1418",display:"flex",justifyContent:"space-between"}}>
+              <span style={{color:"#4a5568",fontSize:13,fontWeight:700}}>Tổng phạt</span>
+              <span style={{fontWeight:900,color:"#f6c90e"}}>{(sess.penalties||[]).reduce((a,p)=>a+p.beers,0)}🍺</span>
+            </div>
+          </div>
+        )}
         <div style={{fontSize:11,color:"#4a5568",fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:".06em"}}>Chi tiết các trận</div>
         {sess.rounds.map((round,ri)=>(
           <div key={ri} className="card">
